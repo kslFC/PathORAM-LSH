@@ -1,0 +1,9 @@
+# Large pretrained embedding model (about 3.4 GB); obtain separately when needed.
+models/GoogleNews-vectors-negative300.bin
+
+# Local build outputs and macOS metadata.
+*.class
+.DS_Store
+
+# Runtime ORAM storage.
+serverStorage/
