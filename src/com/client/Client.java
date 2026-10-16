@@ -181,9 +181,6 @@ public class Client implements ClientInterface{
 		// cached until a future READ miss provides the complete path to rebuild.
 		if (cacheHit) {
 			delayed_single_evict_after_access(blockIndex, useLshLeafAssignment);
-			if (op == Operation.READ) {
-				logStashSnapshot("AFTER-READ", "read=" + readCount + " block=" + blockIndex);
-			}
 			return returndata;
 		}
 		// get blocks from client stash to proper bucket
@@ -218,9 +215,6 @@ public class Client implements ClientInterface{
 			} else {
 				delayed_single_evict_after_access(blockIndex, false);
 			}
-		}
-		if (op == Operation.READ) {
-			logStashSnapshot("AFTER-READ", "read=" + readCount + " block=" + blockIndex);
 		}
 		
 		return returndata;
@@ -331,10 +325,8 @@ public class Client implements ClientInterface{
 		}
 
 		readPath(leaf);
-		logStashSnapshot("BEFORE-SINGLE-EVICT-WRITE", "targetLeaf=" + leaf);
 		int stashSizeBeforePathWrite = stash.size();
 		writePathFromStashForLeaf(leaf, target.getIndex());
-		logStashSnapshot("AFTER-SINGLE-EVICT-WRITE", "targetLeaf=" + leaf);
 		int blocksWrittenOnPath = stashSizeBeforePathWrite - stash.size();
 		boolean evicted = stash.find_by_index(target.getIndex()) == null;
 		if (evicted) {
@@ -760,20 +752,6 @@ public class Client implements ClientInterface{
 		}
 		Collections.reverse(nodes);
 		return nodes.toString().replace(", ", "->").replace("[", "").replace("]", "");
-	}
-
-	private void logStashSnapshot(String stage, String context) {
-		List<Block> blocks = stash.blocksSnapshot();
-		blocks.sort((left, right) -> Integer.compare(left.getIndex(), right.getIndex()));
-		StringBuilder snapshot = new StringBuilder();
-		for (Block block : blocks) {
-			if (snapshot.length() > 0) {
-				snapshot.append(", ");
-			}
-			snapshot.append(block.getIndex());
-		}
-		System.out.println("[STASH-" + stage + "] " + context
-				+ " size=" + blocks.size() + " blocks=[" + snapshot + "]");
 	}
 
 	private void writePathFromStash(int pathID) {
