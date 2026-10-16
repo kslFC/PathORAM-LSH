@@ -12,6 +12,8 @@ public class MessageUtility {
 	public static final int ORAM_READPATH = 1;
 	public static final int ORAM_WRITEPATH = 2;
 	public static final int ORAM_CLOSE = 3;
+	public static final int ORAM_READBUCKET = 4;
+	public static final int ORAM_WRITEBUCKET = 5;
 	
 	//parse message received from server
 	public static int[] parseTypeAndLength(ByteBuffer b) {

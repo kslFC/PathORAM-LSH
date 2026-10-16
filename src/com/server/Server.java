@@ -122,7 +122,6 @@ public class Server implements ServerInterface {
 					serializedResponse = pathBytes;
 					responseHeader = MessageUtility.createMessageHeaderBytes(MessageUtility.ORAM_READPATH,
 							serializedResponse.length);
-					System.out.println("server READPATH "+pathId+" successful!");
 					pathIdBytes = null;
 					pathBytes = null;
 				}
@@ -150,10 +149,38 @@ public class Server implements ServerInterface {
 					serializedResponse = responseBytes;
 					responseHeader = MessageUtility.createMessageHeaderBytes(MessageUtility.ORAM_WRITEPATH,
 							serializedResponse.length);
-					System.out.println("server WRITEPATH "+pathId+" successful!");
-					System.out.println();
 					pathIdBytes = null;
 					pathBytes = null;
+				}
+				if (type == MessageUtility.ORAM_READBUCKET) {
+					byte[] bucketIdBytes = new byte[4];
+					message.get(bucketIdBytes);
+					int bucketId = Ints.fromByteArray(bucketIdBytes);
+					Bucket bucket = storage.get_bucket(bucketId);
+					serializedResponse = seria.bucketSerializable(bucket);
+					responseHeader = MessageUtility.createMessageHeaderBytes(
+							MessageUtility.ORAM_READBUCKET, serializedResponse.length);
+				}
+				if (type == MessageUtility.ORAM_WRITEBUCKET) {
+					int bucketByteLen = (Configs.BLOCK_DATA_LEN + 4 + 4) * Configs.Z;
+					byte[] bucketIdBytes = new byte[4];
+					byte[] bucketBytes = new byte[bucketByteLen];
+					message.get(bucketIdBytes);
+					message.get(bucketBytes);
+					int bucketId = Ints.fromByteArray(bucketIdBytes);
+					Bucket bucket = seria.bucketFromSerializable(bucketBytes);
+					Lock lock = new ReentrantLock();
+					lock.lock();
+					try {
+						storage.set_bucket(bucketId, bucket);
+					} catch (Exception e) {
+						e.printStackTrace();
+					} finally {
+						lock.unlock();
+					}
+					serializedResponse = new byte[] { 1 };
+					responseHeader = MessageUtility.createMessageHeaderBytes(
+							MessageUtility.ORAM_WRITEBUCKET, serializedResponse.length);
 				}
 				// send response to client
 				ByteBuffer responseMessage = ByteBuffer.wrap(Bytes.concat(responseHeader, serializedResponse));

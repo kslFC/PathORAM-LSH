@@ -13,17 +13,20 @@ public class Block implements Serializable{
 	private int leaf_id;
 	private int index;
 	private byte[] data;
+	private int evictCount;
 	
 	public Block(){
 		leaf_id = -1;
 		index = -1;
 		data = new byte[Configs.BLOCK_DATA_LEN];
+		evictCount = Configs.DEFAULT_DELAYED_EVICT_COUNT;
 	}
 	
 	public Block(int leaf_id, int index, byte[] data){
 		this.leaf_id = leaf_id;
 		this.index = index;
 		this.data = data;
+		this.evictCount = Configs.DEFAULT_DELAYED_EVICT_COUNT;
 	}
 	
 	public int getLeaf_id() {
@@ -44,4 +47,13 @@ public class Block implements Serializable{
 	public void setData(byte[] data) {
 		this.data = data;
 	}	
+	public int getEvictCount() {
+		return evictCount;
+	}
+	public void setEvictCount(int evictCount) {
+		this.evictCount = evictCount;
+	}
+	public void decrementEvictCount() {
+		evictCount--;
+	}
 }

@@ -19,6 +19,14 @@ public class ServerStorage {
 	public void set_bucket(int id,Bucket bkt) throws IOException{
 		String dst = Configs.STORAGE_PATH + id;
 		File f = new File(dst);
+		File storageDirectory = f.getParentFile();
+		if (storageDirectory != null
+				&& !storageDirectory.isDirectory()
+				&& !storageDirectory.mkdirs()
+				&& !storageDirectory.isDirectory()) {
+			throw new IOException("Failed to create server storage directory: "
+					+ storageDirectory.getAbsolutePath());
+		}
 		if(!f.exists())
 			f.createNewFile();
 		

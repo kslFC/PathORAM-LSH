@@ -13,6 +13,10 @@ public class RandomForORAM {
 	public RandomForORAM(){
 		rnd_generator = new Random();
 	}
+
+	public RandomForORAM(long seed){
+		rnd_generator = new Random(seed);
+	}
 	
 	public int getRandomLeaf(){
 		int randomLeaf = rnd_generator.nextInt(Configs.LEAF_COUNT);
