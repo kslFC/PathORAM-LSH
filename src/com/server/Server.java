@@ -38,7 +38,6 @@ public class Server implements ServerInterface {
 					Executors.defaultThreadFactory());
 			AsynchronousServerSocketChannel channel = AsynchronousServerSocketChannel.open(threadGroup)
 					.bind(new InetSocketAddress(Configs.SERVER_PORT));
-			System.out.println("server wait for connection.");
 			channel.accept(null, new CompletionHandler<AsynchronousSocketChannel, Void>() {
 
 				@Override
@@ -57,7 +56,8 @@ public class Server implements ServerInterface {
 				}
 			});
 		} catch (Exception e) {
-			e.printStackTrace();
+			// Keep normal server startup quiet; report failures on stderr.
+			e.printStackTrace(System.err);
 		}
 	}
 
@@ -95,7 +95,6 @@ public class Server implements ServerInterface {
 						if (!initedServer) {
 							initServer();
 						} else {
-							System.out.println("server had been initialized!");
 							lock.unlock();
 							break;
 						}
@@ -109,7 +108,6 @@ public class Server implements ServerInterface {
 					serializedResponse = responseBytes;
 					responseHeader = MessageUtility.createMessageHeaderBytes(MessageUtility.ORAM_INIT,
 							serializedResponse.length);
-					System.out.println("server INIT successful!");
 					responseBytes = null;
 				}
 				if (type == MessageUtility.ORAM_READPATH) {
@@ -212,8 +210,6 @@ public class Server implements ServerInterface {
 			}
 			// System.out.println("init bucket "+i+" successful.");
 		}
-		System.out.println("init server" + " successful.");
-		System.out.println();
 	}
 
 	@Override

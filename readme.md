@@ -17,6 +17,6 @@ The client first writes all 48 files, then performs 300 reads. Block IDs are spl
 
 Run the cache and no-cache conditions with the same access seed and transition probability to replay the same request sequence, for example `baseline-cache 12345 0.20` and `baseline-no-cache 12345 0.20`. The default transition probability is 0.20.
 
-The client reports `[READ-LATENCY]` for the 300 measured READ operations. It includes only each `obliviousAccess(..., READ)` call (including its client processing, server communication, writeback, and eviction), and excludes data loading, initial writes, access selection, and result checking. Per-access console diagnostics are suppressed during this measurement. The output includes the sum, mean, median, p95, and p99 latency in milliseconds; no warm-up reads are discarded.
+The client reports one `[SUMMARY]` line for the 300 measured READ operations. It includes only each `obliviousAccess(..., READ)` call (including its client processing, server communication, writeback, and eviction), and excludes data loading, initial writes, access selection, and result checking. Normal client and server logs are suppressed during setup and measurement. The summary includes total, mean, median, p95, and p99 latency in milliseconds; no warm-up reads are discarded.
 
 

@@ -42,6 +42,8 @@ public class Client implements ClientInterface{
 	private int serverReadCount;
 	private int singleEvictAttempts;
 	private int singleEvictSuccesses;
+	private int singleEvictBucketReads;
+	private int singleEvictBucketReuses;
 	private int fallbackPathEvictCount;
 	private int fallbackEvictCursor;
 	private int lshAssignmentCount;
@@ -169,8 +171,10 @@ public class Client implements ClientInterface{
 					int assignedLeaf = chooseLeafFromHash(hashForBlock(blockIndex, returndata));
 					position_map[blockIndex] = assignedLeaf;
 					lshAssignmentCount++;
-					logLshRemap(blockIndex, position, assignedLeaf,
-							hashForBlock(blockIndex, returndata));
+					if (Boolean.getBoolean("pathoram.lsh.debug")) {
+						logLshRemap(blockIndex, position, assignedLeaf,
+								hashForBlock(blockIndex, returndata));
+					}
 				}
 				b.setLeaf_id(position_map[blockIndex]);
 				stash.updataBlock(b);//update block path id
@@ -180,7 +184,7 @@ public class Client implements ClientInterface{
 		// would overwrite blocks that were already on the server. Keep those blocks
 		// cached until a future READ miss provides the complete path to rebuild.
 		if (cacheHit) {
-			delayed_single_evict_after_access(blockIndex, useLshLeafAssignment);
+			delayed_single_evict_after_access(blockIndex, useLshLeafAssignment, -1, null);
 			return returndata;
 		}
 		// get blocks from client stash to proper bucket
@@ -208,14 +212,16 @@ public class Client implements ClientInterface{
 		
 		//write path
 		writePath(position, bucket_list);
-		bucket_list = null;
 		if (op == Operation.READ && (useReadCache || useLshLeafAssignment)) {
 			if (useLshLeafAssignment) {
-				delayed_single_evict_after_access(blockIndex, true);
+				// The just-written path is still available in memory. Single eviction
+				// reuses its shared buckets instead of fetching the same bucket again.
+				delayed_single_evict_after_access(blockIndex, true, position, bucket_list);
 			} else {
-				delayed_single_evict_after_access(blockIndex, false);
+				delayed_single_evict_after_access(blockIndex, false, -1, null);
 			}
 		}
+		bucket_list = null;
 		
 		return returndata;
 	}
@@ -244,6 +250,14 @@ public class Client implements ClientInterface{
 		return singleEvictSuccesses;
 	}
 
+	public int getSingleEvictBucketReads() {
+		return singleEvictBucketReads;
+	}
+
+	public int getSingleEvictBucketReuses() {
+		return singleEvictBucketReuses;
+	}
+
 	public int getFallbackPathEvictCount() {
 		return fallbackPathEvictCount;
 	}
@@ -257,7 +271,8 @@ public class Client implements ClientInterface{
 	}
 
 	/** Age stash blocks after each cached READ and evict expired blocks immediately. */
-	private void delayed_single_evict_after_access(int accessedBlockIndex, boolean targetOnly) {
+	private void delayed_single_evict_after_access(int accessedBlockIndex, boolean targetOnly,
+			int reusablePathLeaf, Bucket[] reusablePathBuckets) {
 		for (Block block : stash.blocksSnapshot()) {
 			if (block.getIndex() != accessedBlockIndex) {
 				block.decrementEvictCount();
@@ -273,7 +288,7 @@ public class Client implements ClientInterface{
 			}
 			attempted.add(candidate.getIndex());
 			singleEvictAttempts++;
-			if (single_evict_block(candidate, targetOnly)) {
+			if (single_evict_block(candidate, targetOnly, reusablePathLeaf, reusablePathBuckets)) {
 				singleEvictSuccesses++;
 			} else {
 				// Retain it for later retry if its current path has no free bucket slot.
@@ -312,7 +327,8 @@ public class Client implements ClientInterface{
 	}
 
 	/** Evict the expired block and its peers assigned to the exact same leaf path. */
-	private boolean single_evict_block(Block target, boolean targetOnly) {
+	private boolean single_evict_block(Block target, boolean targetOnly,
+			int reusablePathLeaf, Bucket[] reusablePathBuckets) {
 		if (target == null) {
 			return false;
 		}
@@ -321,30 +337,29 @@ public class Client implements ClientInterface{
 			return false;
 		}
 		if (targetOnly) {
-			return single_evict_target_only(target, leaf);
+			return single_evict_target_only(target, leaf, reusablePathLeaf, reusablePathBuckets);
 		}
 
 		readPath(leaf);
-		int stashSizeBeforePathWrite = stash.size();
 		writePathFromStashForLeaf(leaf, target.getIndex());
-		int blocksWrittenOnPath = stashSizeBeforePathWrite - stash.size();
 		boolean evicted = stash.find_by_index(target.getIndex()) == null;
 		if (evicted) {
-			System.out.println("[SINGLE-EVICT] blockIndex=" + target.getIndex()
-					+ " path=" + leaf
-					+ " blocksWrittenOnPath=" + blocksWrittenOnPath
-					+ " stashSize=" + stash.size());
 			return true;
 		}
-		System.out.println("[SINGLE-EVICT-FAIL] blockIndex=" + target.getIndex()
-				+ " path=" + leaf + " stashSize=" + stash.size());
 		return false;
 	}
 
 	/** Roost-style LSH eviction: move only the selected stash block into one free bucket slot. */
-	private boolean single_evict_target_only(Block target, int leaf) {
+	private boolean single_evict_target_only(Block target, int leaf,
+			int reusablePathLeaf, Bucket[] reusablePathBuckets) {
 		for (int bucketId : pathFromRootToLeaf(leaf)) {
-			Bucket bucket = readBucket(bucketId);
+			Bucket bucket = findReusablePathBucket(bucketId, reusablePathLeaf, reusablePathBuckets);
+			if (bucket != null) {
+				singleEvictBucketReuses++;
+			} else {
+				singleEvictBucketReads++;
+				bucket = readBucket(bucketId);
+			}
 			if (bucket == null) {
 				return false;
 			}
@@ -373,6 +388,23 @@ public class Client implements ClientInterface{
 			}
 		}
 		return false;
+	}
+
+	/** Find a bucket in the path just read and written; the array is leaf-to-root. */
+	private Bucket findReusablePathBucket(int bucketId, int pathLeaf, Bucket[] pathBuckets) {
+		if (pathBuckets == null || pathLeaf < 0) {
+			return null;
+		}
+		int pathIndex = 0;
+		for (int node = pathLeaf; node >= 0; node = (node - 1) >> 1, pathIndex++) {
+			if (node == bucketId) {
+				return pathIndex < pathBuckets.length ? pathBuckets[pathIndex] : null;
+			}
+			if (node == 0) {
+				break;
+			}
+		}
+		return null;
 	}
 
 	/** Return bucket IDs from the global root down to the assigned leaf. */
@@ -982,6 +1014,10 @@ public class Client implements ClientInterface{
 			return;
 		}
 
+		PrintStream experimentOutput = System.out;
+		PrintStream silentOutput = new PrintStream(OutputStream.nullOutputStream());
+		System.setOut(silentOutput);
+
 		Path dataDirectory = Paths.get("data");
 		if (!Files.isDirectory(dataDirectory)) {
 			dataDirectory = Paths.get("..", "data");
@@ -1012,12 +1048,8 @@ public class Client implements ClientInterface{
 		int dataMismatches = 0;
 		int readIterations = 300;
 		long[] readLatenciesNs = new long[readIterations];
-		PrintStream experimentOutput = System.out;
-		PrintStream silentOutput = new PrintStream(OutputStream.nullOutputStream());
 		try {
-			// Match Roost ORAM: suppress per-access diagnostics so console I/O does not
-			// dominate the measured READ latency. No warm-up READs are discarded.
-			System.setOut(silentOutput);
+			// Keep normal diagnostics out of setup and measured READs. No warm-up READs are discarded.
 			for (int i = 0; i < readIterations; i++) {
 				if (accessRandom.nextDouble() < transitionProbability) {
 					int previousGroup = currentGroup;
@@ -1051,28 +1083,28 @@ public class Client implements ClientInterface{
 		}
 		long[] sortedReadLatenciesNs = Arrays.copyOf(readLatenciesNs, readLatenciesNs.length);
 		Arrays.sort(sortedReadLatenciesNs);
-		System.out.println("[READ-LATENCY] operations=" + readIterations
+		System.out.println("[SUMMARY] mode=" + mode
+				+ " lshClusters=" + client.getLshClusterCount()
+				+ " lshAssignments=" + client.getLshAssignmentCount()
+				+ " operations=" + readIterations
 				+ " totalMs=" + String.format(java.util.Locale.ROOT, "%.3f", nanosToMillis(totalReadNs))
 				+ " meanMs=" + String.format(java.util.Locale.ROOT, "%.3f", nanosToMillis(totalReadNs) / readIterations)
 				+ " medianMs=" + String.format(java.util.Locale.ROOT, "%.3f", medianMillis(sortedReadLatenciesNs))
 				+ " p95Ms=" + String.format(java.util.Locale.ROOT, "%.3f", percentileMillis(sortedReadLatenciesNs, 0.95))
-				+ " p99Ms=" + String.format(java.util.Locale.ROOT, "%.3f", percentileMillis(sortedReadLatenciesNs, 0.99)));
-
-		System.out.println("[EXPERIMENT] mode=" + mode
-				+ " lshClusters=" + client.getLshClusterCount()
-				+ " lshAssignments=" + client.getLshAssignmentCount()
-				+ " reads=" + readIterations
+				+ " p99Ms=" + String.format(java.util.Locale.ROOT, "%.3f", percentileMillis(sortedReadLatenciesNs, 0.99))
 				+ " transitionProbability=" + transitionProbability
 				+ " transitions=" + transitions
 				+ " accessSeed=" + accessSeed
-				+ " oramSeed=" + oramSeed);
-		System.out.println("[SUMMARY] cache=" + useCache
+				+ " oramSeed=" + oramSeed
+				+ " cache=" + useCache
 				+ " lsh=" + useLsh
 				+ " cacheHits=" + client.getCacheHitCount()
 				+ " cacheHitRate=" + client.getCacheHitRate()
 				+ " serverReads=" + client.getServerReadCount()
 				+ " singleEvictAttempts=" + client.getSingleEvictAttempts()
 				+ " singleEvictSuccesses=" + client.getSingleEvictSuccesses()
+				+ " singleEvictBucketReads=" + client.getSingleEvictBucketReads()
+				+ " singleEvictBucketReuses=" + client.getSingleEvictBucketReuses()
 				+ " fallbackPathEvicts=" + client.getFallbackPathEvictCount()
 				+ " stashSize=" + client.stash.size()
 				+ " dataMismatches=" + dataMismatches);
